@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RBI Assessment Engine</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #060910; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0d1321; }
+    ::-webkit-scrollbar-thumb { background: #1c2a45; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+    const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
+             LineChart, Line, CartesianGrid, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area } = Recharts;
+
+
+
+
+// ================================================================
+// API 581 REFERENCE DATA
+// ================================================================
+const GFF = {
+  COMPR:{n:"Compressor",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  HEXSS:{n:"HX Shell",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  HEXTS:{n:"HX Tube",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  "PIPE-2":{n:"Pipe ≤2\"",s:2.8e-5,m:0,l:0,r:2.6e-6,t:3.06e-5},
+  "PIPE-4":{n:"Pipe 4\"",s:8e-6,m:2e-5,l:0,r:2.6e-6,t:3.06e-5},
+  "PIPE-8":{n:"Pipe 8-16\"",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  DRUM:{n:"Drum/Vessel",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  KODRUM:{n:"KO Drum",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  COLBTM:{n:"Column Bottom",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  COLMID:{n:"Column Mid",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  COLTOP:{n:"Column Top",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  REACTOR:{n:"Reactor",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  FINFAN:{n:"Fin Fan",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  FILTER:{n:"Filter",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+  TANKBTM:{n:"Tank Bottom",s:7.2e-4,m:0,l:0,r:2e-6,t:7.2e-4},
+  COURSE1:{n:"Tank Course",s:7e-5,m:2.5e-5,l:5e-6,r:1e-7,t:1e-4},
+  PUMP:{n:"Pump",s:8e-6,m:2e-5,l:2e-6,r:6e-7,t:3.06e-5},
+};
+
+const FLUIDS = {
+  C1:{n:"Methane (C1-C2)",mw:16,bp:-161,fl:true,tx:false,ph:"gas"},
+  C3:{n:"Propane (C3-C4)",mw:44,bp:-42,fl:true,tx:false,ph:"gas"},
+  C6:{n:"Naphtha (C5-C8)",mw:86,bp:69,fl:true,tx:false,ph:"liquid"},
+  C9:{n:"Heavy Naphtha",mw:120,bp:150,fl:true,tx:false,ph:"liquid"},
+  C13:{n:"Diesel (C13-C16)",mw:170,bp:230,fl:true,tx:false,ph:"liquid"},
+  C17:{n:"Gas Oil (C17-C25)",mw:280,bp:300,fl:true,tx:false,ph:"liquid"},
+  C25:{n:"Residuum (C25+)",mw:422,bp:400,fl:true,tx:false,ph:"liquid"},
+  H2:{n:"Hydrogen",mw:2,bp:-253,fl:true,tx:false,ph:"gas"},
+  H2S:{n:"H₂S",mw:34,bp:-60,fl:true,tx:true,ph:"gas"},
+  HF:{n:"HF Acid",mw:20,bp:19.5,fl:false,tx:true,ph:"liquid"},
+  Water:{n:"Water/Steam",mw:18,bp:100,fl:false,tx:false,ph:"liquid"},
+  NH3:{n:"Ammonia",mw:17,bp:-33,fl:false,tx:true,ph:"gas"},
+};
+
+const IE = {
+  A:{n:"Highly Effective",f:0.01,d:"Correctly identifies damage state nearly every time"},
+  B:{n:"Usually Effective",f:0.1,d:"Correctly identifies damage most of the time"},
+  C:{n:"Fairly Effective",f:0.2,d:"May miss or understate damage"},
+  D:{n:"Poorly Effective",f:0.5,d:"Likely to miss damage"},
+  E:{n:"Ineffective",f:1.0,d:"No meaningful damage information"},
+};
+
+const MGMT_AREAS = [
+  {id:"lead",n:"Leadership & Admin",mx:70},{id:"psi",n:"Process Safety Info",mx:80},
+  {id:"pha",n:"Process Hazard Analysis",mx:100},{id:"moc",n:"Management of Change",mx:80},
+  {id:"proc",n:"Operating Procedures",mx:80},{id:"safe",n:"Safe Work Practices",mx:85},
+  {id:"train",n:"Training",mx:100},{id:"mi",n:"Mechanical Integrity",mx:120},
+  {id:"pssr",n:"Pre-Startup Safety Review",mx:60},{id:"emerg",n:"Emergency Response",mx:65},
+  {id:"inc",n:"Incident Investigation",mx:75},{id:"contr",n:"Contractors",mx:45},
+  {id:"audit",n:"Audits",mx:40},
+];
+
+// ================================================================
+// CORROSION RATE ENVIRONMENTS (API 581 Annex 2.B)
+// ================================================================
+const CORR_ENV = {
+  sulfidation:{
+    name:"Sulfidation (H₂S/Sulfur)",ref:"API 571 §5.1.1.3",
+    calc:(T,H2S,mat)=>{
+      if(T<260) return {rate:0,note:"Below 260°C threshold"};
+      const b=mat==="carbon_steel"?0.254*Math.exp(0.0055*(T-260)):mat==="5Cr"?0.127*Math.exp(0.005*(T-288)):mat==="9Cr"?0.076*Math.exp(0.004*(T-316)):0.025;
+      return {rate:Math.min(b*Math.max(0.1,Math.sqrt(H2S)),5),note:`McConomy at ${T}°C, ${H2S}% H₂S`};
+    }
+  },
+  naphthenic:{
+    name:"Naphthenic Acid",ref:"API 571 §5.1.1.2",
+    calc:(T,TAN,vel,mat)=>{
+      if(T<220||T>400) return {rate:0,note:"Outside 220-400°C range"};
+      if(TAN<0.5) return {rate:0.05,note:"Low TAN"};
+      const b=mat==="carbon_steel"?0.1*TAN*Math.exp(0.003*(T-220)):0.01*TAN;
+      return {rate:Math.min(b*(vel>30?2:vel>15?1.5:1),5),note:`TAN=${TAN}, vel factor applied`};
+    }
+  },
+  co2:{
+    name:"CO₂ Corrosion (Sweet)",ref:"API 571 §5.1.2.2",
+    calc:(T,pp,pH,mat)=>{
+      if(mat!=="carbon_steel") return {rate:0.01,note:"CRA resistant"};
+      return {rate:Math.min(Math.max(2.28*Math.pow(pp/100,0.62)*Math.exp(-1710/(T+273))*Math.pow(10,0.32*(4-Math.min(pH,6))),0),10),note:`de Waard-Milliams, CO₂ pp=${pp}kPa`};
+    }
+  },
+  hcl:{
+    name:"HCl Corrosion",ref:"API 571 §5.1.1.1",
+    calc:(T,ppm,water,mat)=>{
+      if(!water) return {rate:0,note:"No free water"};
+      if(mat!=="carbon_steel") return {rate:ppm>100?0.5:0.05,note:"CRA"};
+      const r=ppm>200?2.5:ppm>50?1:ppm>20?0.5:0.1;
+      return {rate:r*(T>120?0.5:T>80?1:1.5),note:`Dewpoint at ${T}°C`};
+    }
+  },
+  wet_h2s:{
+    name:"Wet H₂S Cracking",ref:"API 571 §5.1.2.3",
+    calc:(T,pp,pH)=>{
+      if(T>150) return {rate:0,note:"Above wet H₂S range"};
+      return {rate:pp>100?0.5:0.15,note:`SSC:${pp>300?"HIGH":pp>50?"MED":"LOW"} HIC:${pH<4?"HIGH":pH<5.5?"MED":"LOW"}`,ssc:pp>300?"high":pp>50?"medium":"low",hic:pH<4?"high":pH<5.5?"medium":"low"};
+    }
+  },
+  amine:{
+    name:"Amine Corrosion",ref:"API 571 §5.1.2.8",
+    calc:(T,type,conc,vel,mat)=>{
+      if(mat!=="carbon_steel") return {rate:0.05,note:"CRA"};
+      const bf=type==="MEA"?1.5:type==="DEA"?1:0.7;
+      return {rate:Math.min(bf*(conc/20)*(vel>6?2:vel>3?1.5:1)*(T>100?1.5:1),3),note:`${type} ${conc}%`};
+    }
+  },
+  atmospheric:{
+    name:"Atmospheric/External",ref:"API 571 §4.2.1",
+    calc:(clim,ins,Top,coat)=>{
+      const b=clim==="marine"?0.15:clim==="humid"?0.08:clim==="temperate"?0.03:0.01;
+      const i=ins&&Top>=-12&&Top<=175?5:ins?2:1;
+      const c=coat==="good"?0.1:coat==="fair"?0.5:1;
+      return {rate:b*i*c,note:`${clim}, CUI factor=${i}`};
+    }
+  },
+};
+
+// ================================================================
+// DAMAGE MECHANISM SCREENING (API 571)
+// ================================================================
+const DM_RULES = [
+  {id:"thin",n:"General/Local Thinning",cat:"thinning",chk:()=>true},
+  {id:"ext",n:"External Corrosion",cat:"external",chk:()=>true},
+  {id:"cui_f",n:"CUI (Ferritic)",cat:"external",chk:d=>d.hasInsul&&d.matGrp==="carbon_steel"&&d.T>=-12&&d.T<=175},
+  {id:"cui_a",n:"CUI-CLSCC (Austenitic)",cat:"cracking",chk:d=>d.hasInsul&&d.matGrp==="stainless_300"&&d.T>=50&&d.T<=175},
+  {id:"sulf",n:"Sulfidation",cat:"thinning",chk:d=>d.hasH2S&&d.T>=260},
+  {id:"naph",n:"Naphthenic Acid",cat:"thinning",chk:d=>d.TAN>0.5&&d.T>=220&&d.T<=400},
+  {id:"htha",n:"HTHA",cat:"metallurgical",chk:d=>d.h2pp>700&&d.T>=200},
+  {id:"caus",n:"Caustic Cracking",cat:"cracking",chk:d=>d.hasCaustic&&d.T>=46&&d.matGrp==="carbon_steel"},
+  {id:"amine",n:"Amine Cracking",cat:"cracking",chk:d=>d.hasAmine&&d.matGrp==="carbon_steel"},
+  {id:"clscc",n:"Chloride SCC",cat:"cracking",chk:d=>d.matGrp==="stainless_300"&&d.hasCl&&d.T>=50},
+  {id:"wh2s",n:"Wet H₂S (HIC/SOHIC/SSC)",cat:"cracking",chk:d=>d.hasH2S&&d.T<150&&d.hasWater},
+  {id:"pascc",n:"Polythionic Acid SCC",cat:"cracking",chk:d=>d.matGrp==="stainless_300"&&d.hasH2S&&d.T>=370},
+  {id:"tempe",n:"Temper Embrittlement",cat:"metallurgical",chk:d=>d.matGrp==="low_alloy"&&d.T>=343},
+  {id:"885f",n:"885°F Embrittlement",cat:"metallurgical",chk:d=>d.matGrp==="stainless_400"&&d.T>=371&&d.T<=538},
+  {id:"sigma",n:"Sigma Phase",cat:"metallurgical",chk:d=>(d.matGrp==="stainless_300"||d.matGrp==="stainless_duplex")&&d.T>=593},
+  {id:"brit",n:"Brittle Fracture",cat:"metallurgical",chk:d=>(d.matGrp==="carbon_steel"||d.matGrp==="low_alloy")&&d.T_min<0},
+  {id:"fat",n:"Mechanical Fatigue",cat:"mechanical",chk:d=>d.cyclicService},
+  {id:"co2c",n:"CO₂ Corrosion",cat:"thinning",chk:d=>d.hasCO2&&d.hasWater&&d.matGrp==="carbon_steel"},
+  {id:"eros",n:"Erosion/Erosion-Corrosion",cat:"thinning",chk:d=>d.velocity>15},
+];
+
+// ================================================================
+// CALCULATION ENGINES
+// ================================================================
+function calcAllDF(eq, insp) {
+  const cr=eq.corrRate||0.1, age=eq.age||10, tN=eq.tNom||20, tM=eq.tMin||10;
+  const wl=cr*age, Art=Math.min(wl/tN,1.5), tA=Math.max(tN-wl,0);
+  const rl=cr>0&&tA>tM?(tA-tM)/cr:cr>0?0:999;
+
+  const ic=(type)=>(insp||[]).filter(i=>i.type===type).reduce((c,i)=>c*Math.max(IE[i.eff]?.f||1,0.01),1);
+
+  const thinB=Art<=0.1?1+Art*10:Art<=0.2?2+(Art-0.1)*30:Art<=0.3?5+(Art-0.2)*80:Art<=0.5?13+(Art-0.3)*200:Art<=0.8?53+(Art-0.5)*500:203+(Art-0.8)*5000;
+  const dfThin={name:"Thinning",df:Math.max(thinB*ic("thinning"),1),base:thinB,ic:ic("thinning")};
+
+  const extB=(eq.hasInsul?(eq.climate==="marine"?200:eq.climate==="humid"?100:50):(eq.climate==="marine"?30:eq.climate==="humid"?15:5))*(eq.coat==="good"?0.1:eq.coat==="fair"?0.5:1);
+  const dfExt={name:"External Corr",df:Math.max(extB*ic("external"),1),base:extB};
+
+  const cuiOn=eq.hasInsul&&eq.T>=-12&&eq.T<=175;
+  const cuiB=cuiOn?(eq.climate==="marine"?300:eq.climate==="humid"?150:60)*(eq.coat==="good"?0.1:eq.coat==="fair"?0.5:1):0;
+  const dfCUI={name:"CUI",df:Math.max(cuiB*ic("external"),1),base:cuiB};
+
+  const sccM={none:1,low:10,medium:100,high:1000,"very high":5000};
+  const dfSCC={name:"SCC",df:Math.max((sccM[eq.scc]||1)*ic("cracking"),1),base:sccM[eq.scc]||1};
+
+  let hthaB=1;
+  if(eq.h2pp>0){const thr=eq.matGrp==="carbon_steel"?200+50*Math.log10(Math.max(eq.h2pp/100,0.1)):eq.matGrp==="low_alloy"||eq.matGrp==="2.25Cr"?350+35*Math.log10(Math.max(eq.h2pp/100,0.1)):999;hthaB=eq.T>=thr?5000:eq.T>=thr*0.9?1000:eq.T>=thr*0.8?100:1;}
+  const dfHTHA={name:"HTHA",df:Math.max(hthaB,1),base:hthaB};
+
+  const britM=(eq.matGrp==="carbon_steel"||eq.matGrp==="low_alloy")?(eq.T-(eq.pwht?eq.refT-10:eq.refT+20))>30?1:(eq.T-(eq.pwht?eq.refT-10:eq.refT+20))>0?50:500:1;
+  const dfBrit={name:"Brittle Frac",df:Math.max(britM,1),base:britM};
+
+  const e885=eq.matGrp==="stainless_400"&&eq.T>=371&&eq.T<=538?{name:"885°F Emb",df:Math.max(age>20?500:age>10?100:20,1)}:{name:"885°F Emb",df:1};
+  const sigm=((eq.matGrp==="stainless_300"||eq.matGrp==="stainless_duplex")&&eq.T>=593)?{name:"Sigma Phase",df:Math.max(age>20?300:80,1)}:{name:"Sigma Phase",df:1};
+  const temp=eq.matGrp==="low_alloy"&&eq.T>=343?{name:"Temper Emb",df:Math.max(eq.T>480&&age>15?500:100,1)}:{name:"Temper Emb",df:1};
+  const dfFat=eq.cyclicService?{name:"Fatigue",df:50}:{name:"Fatigue",df:1};
+
+  const all=[dfThin,dfExt,dfCUI,dfSCC,dfHTHA,dfBrit,e885,sigm,temp,dfFat];
+  const tot=Math.max(all.reduce((s,d)=>s+d.df,0)-(all.length-1),1);
+  return {all,tot,Art,wl,tA,rl,active:all.filter(d=>d.df>1)};
+}
+
+function calcFMS(sc){const t=MGMT_AREAS.reduce((s,a)=>s+(sc[a.id]||0),0);const ps=t/10;return{fms:Math.max(0.1,Math.min(Math.pow(10,-0.02*ps+1),10)),ps,t};}
+
+function calcCOF(fl,P,T,inv,comp,det,iso){
+  const f=FLUIDS[fl],g=GFF[comp];if(!f||!g)return{ca:0,fin:0,caMap:{}};
+  const mit=Math.max(({A:.25,B:.5,C:1}[det]||1)*({A:.25,B:.5,C:1}[iso]||1),0.1);
+  const hs={small:.25,medium:1,large:4,rupture:16};
+  let wCA=0;const caMap={};
+  ["small","medium","large","rupture"].forEach(sz=>{
+    if(g[sz[0]]<=0&&sz!=="small"){caMap[sz]=0;return;}
+    const gv=sz==="small"?g.s:sz==="medium"?g.m:sz==="large"?g.l:g.r;
+    if(gv<=0){caMap[sz]=0;return;}
+    const ar=Math.PI*Math.pow(hs[sz]*0.0254/2,2);
+    const dens=f.ph==="gas"?(P*f.mw)/(8314*(T+273)):700;
+    const vel=Math.sqrt(2*Math.max(P-101.325,10)*1000/dens);
+    const rate=0.61*ar*dens*vel;
+    const mass=Math.min(rate*180,inv);
+    const X=sz==="rupture"?mass:rate;
+    let ca=f.fl?(f.ph==="gas"?30*Math.pow(X,0.65):15*Math.pow(X,0.55)):0;
+    if(f.tx)ca=Math.max(ca,100*Math.pow(mass,0.7));
+    ca*=mit;caMap[sz]=ca;wCA+=gv*ca;
+  });
+  wCA/=g.t;
+  return{ca:wCA,fin:inv*2+50000*14+wCA*10,mit,caMap};
+}
+
+const rCat=(p,c)=>{const pc=p<=3.06e-5?1:p<=3.06e-4?2:p<=3.06e-3?3:p<=3.06e-2?4:5;const cc=c<=100?"A":c<=1000?"B":c<=10000?"C":c<=100000?"D":"E";const cn={A:1,B:2,C:3,D:4,E:5}[cc];const s=pc+cn;return{pc,cc,cn,s,lv:s<=3?"Low":s<=5?"Medium":s<=7?"Medium-High":"High"};};
+
+function calcInspPlan(pof,cof,dfTot,cr,tA,tM,target,comp,fms){
+  const gff=GFF[comp]?.t||3.06e-5;
+  const pts=[];
+  for(let y=0.5;y<=20;y+=0.5){
+    const g=1+Math.pow(y/5,1.8);
+    const fp=Math.min(gff*fms*dfTot*g,1);
+    const fr=fp*cof;
+    const frl=cr>0?Math.max((tA-cr*y-tM)/cr,0):999;
+    pts.push({year:y,pof:fp,risk:fr,rl:frl,df:dfTot*g});
+  }
+  const ex=pts.findIndex(p=>p.risk>target);
+  const mx=ex>=0?Math.min(pts[ex].year,10):10;
+  const re=pof*cof>target*2?"A":pof*cof>target?"B":pof*cof>target*0.5?"C":"D";
+  return{pts,mx,re,cr:pof*cof,tgt:target};
+}
+
+const RC={Low:"#10b981",Medium:"#eab308","Medium-High":"#f97316",High:"#ef4444"};
+
+// ================================================================
+// SAMPLE DATA
+// ================================================================
+const INIT_EQ=[
+  {id:"V-101",name:"Overhead Accumulator",unit:"CDU",comp:"DRUM",tNom:25.4,tMin:12.7,corrRate:0.25,age:15,conf:"medium",fluid:"C3",P:1500,T:120,T_min:-10,inv:5000,matGrp:"carbon_steel",matSpec:"SA-516 Gr70",scc:"medium",hasInsul:true,climate:"humid",coat:"fair",det:"B",iso:"B",h2pp:0,refT:-20,pwht:true,cyclicService:false,hasH2S:false,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:true,TAN:0,velocity:2,insp:[{id:1,eff:"B",type:"thinning",date:"2020-03-15",method:"UT Grid",desc:"Turnaround UT survey"},{id:2,eff:"A",type:"thinning",date:"2023-06-20",method:"Full UT Scan",desc:"Full internal + scanning"}]},
+  {id:"E-201",name:"Feed/Effluent Exchanger",unit:"HDS",comp:"HEXSS",tNom:19.0,tMin:8.5,corrRate:0.15,age:20,conf:"high",fluid:"C9",P:3500,T:350,T_min:20,inv:3000,matGrp:"low_alloy",matSpec:"SA-387 Gr11",scc:"low",hasInsul:true,climate:"humid",coat:"good",det:"A",iso:"B",h2pp:2000,refT:-10,pwht:true,cyclicService:false,hasH2S:true,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:false,TAN:0,velocity:5,insp:[{id:1,eff:"B",type:"thinning",date:"2021-04-10",method:"UT Spot",desc:"On-stream UT"}]},
+  {id:"C-301",name:"Frac Column Bottom",unit:"CDU",comp:"COLBTM",tNom:32.0,tMin:16.0,corrRate:0.35,age:25,conf:"medium",fluid:"C17",P:200,T:380,T_min:25,inv:15000,matGrp:"carbon_steel",matSpec:"SA-516 Gr70",scc:"high",hasInsul:false,climate:"humid",coat:"poor",det:"B",iso:"C",h2pp:0,refT:-15,pwht:false,cyclicService:false,hasH2S:true,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:false,TAN:1.2,velocity:3,insp:[{id:1,eff:"C",type:"thinning",date:"2019-11-05",method:"UT Spot",desc:"Limited TA inspection"}]},
+  {id:"R-401",name:"Hydrocracker Reactor",unit:"HDS",comp:"REACTOR",tNom:150.0,tMin:80.0,corrRate:0.05,age:18,conf:"high",fluid:"H2",P:15000,T:420,T_min:20,inv:8000,matGrp:"2.25Cr",matSpec:"SA-387 Gr22",scc:"low",hasInsul:true,climate:"humid",coat:"good",det:"A",iso:"A",h2pp:12000,refT:0,pwht:true,cyclicService:false,hasH2S:true,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:false,TAN:0,velocity:3,insp:[{id:1,eff:"A",type:"thinning",date:"2022-08-01",method:"AUBT+UT",desc:"Advanced UT + AUBT"}]},
+  {id:"T-501",name:"Crude Tank Bottom",unit:"Tank Farm",comp:"TANKBTM",tNom:12.7,tMin:6.35,corrRate:0.20,age:30,conf:"medium",fluid:"C13",P:101,T:45,T_min:10,inv:50000,matGrp:"carbon_steel",matSpec:"A36",scc:"none",hasInsul:false,climate:"marine",coat:"fair",det:"C",iso:"C",h2pp:0,refT:-20,pwht:false,cyclicService:false,hasH2S:false,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:true,TAN:0,velocity:1,insp:[{id:1,eff:"C",type:"thinning",date:"2018-05-12",method:"Floor Scan",desc:"MFL floor scan"},{id:2,eff:"B",type:"external",date:"2021-09-30",method:"VT+UT",desc:"External visual + UT"}]},
+  {id:"L-601",name:"HDS Inlet Pipe 4\"",unit:"HDS",comp:"PIPE-4",tNom:8.56,tMin:3.96,corrRate:0.30,age:10,conf:"medium",fluid:"H2S",P:7000,T:300,T_min:20,inv:500,matGrp:"low_alloy",matSpec:"SA-335 P11",scc:"high",hasInsul:true,climate:"humid",coat:"fair",det:"B",iso:"B",h2pp:5000,refT:-10,pwht:true,cyclicService:false,hasH2S:true,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:false,TAN:0,velocity:20,insp:[{id:1,eff:"B",type:"thinning",date:"2022-02-14",method:"RT Profile",desc:"Profile radiography"}]},
+  {id:"V-702",name:"Amine Contactor",unit:"Amine",comp:"DRUM",tNom:20.0,tMin:10.0,corrRate:0.18,age:22,conf:"medium",fluid:"C3",P:4000,T:55,T_min:5,inv:4000,matGrp:"carbon_steel",matSpec:"SA-516 Gr70",scc:"medium",hasInsul:false,climate:"humid",coat:"fair",det:"B",iso:"B",h2pp:0,refT:-20,pwht:true,cyclicService:false,hasH2S:true,hasCaustic:false,hasAmine:true,hasCl:false,hasCO2:true,hasWater:true,TAN:0,velocity:2,insp:[{id:1,eff:"C",type:"thinning",date:"2020-07-22",method:"UT Spot",desc:""},{id:2,eff:"C",type:"cracking",date:"2020-07-22",method:"WFMT Spot",desc:""}]},
+  {id:"P-102A",name:"Reflux Pump",unit:"CDU",comp:"PUMP",tNom:12.0,tMin:6.0,corrRate:0.10,age:12,conf:"low",fluid:"C6",P:2000,T:80,T_min:15,inv:200,matGrp:"carbon_steel",matSpec:"A216-WCB",scc:"none",hasInsul:false,climate:"humid",coat:"poor",det:"C",iso:"C",h2pp:0,refT:-20,pwht:true,cyclicService:false,hasH2S:false,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:true,TAN:0,velocity:8,insp:[]},
+];
+
+// ================================================================
+// UI PRIMITIVES
+// ================================================================
+const S={bg:"#060910",c1:"#0d1321",c2:"#131b2e",bd:"#1c2a45",ac:"#f59e0b",tx:"#e2e8f0",dm:"#8896ab",mt:"#576478",ib:"#162035"};
+
+const Inp=({label,value,onChange,type="number",step,min,max,placeholder,hint})=>(
+  <div style={{marginBottom:10}}>
+    {label&&<label style={{display:"block",fontSize:10,fontWeight:600,color:S.dm,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</label>}
+    <input type={type} value={value} onChange={e=>onChange(type==="number"?parseFloat(e.target.value)||0:e.target.value)} step={step} min={min} max={max} placeholder={placeholder}
+      style={{width:"100%",padding:"7px 10px",background:S.ib,border:`1px solid ${S.bd}`,borderRadius:4,color:S.tx,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}} />
+    {hint&&<div style={{fontSize:9,color:S.mt,marginTop:2}}>{hint}</div>}
+  </div>
+);
+const Sel=({label,value,onChange,options,hint})=>(
+  <div style={{marginBottom:10}}>
+    {label&&<label style={{display:"block",fontSize:10,fontWeight:600,color:S.dm,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</label>}
+    <select value={value} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"7px 10px",background:S.ib,border:`1px solid ${S.bd}`,borderRadius:4,color:S.tx,fontSize:12,outline:"none",boxSizing:"border-box"}}>
+      {options.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+    {hint&&<div style={{fontSize:9,color:S.mt,marginTop:2}}>{hint}</div>}
+  </div>
+);
+const Chk=({label,checked,onChange})=>(
+  <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:S.tx,cursor:"pointer",marginBottom:6}}><input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)} style={{accentColor:S.ac}} />{label}</label>
+);
+const Box=({label,value,unit,color,w})=>(
+  <div style={{background:"#080d17",borderRadius:6,padding:"8px 10px",border:`1px solid ${S.bd}`,textAlign:"center",flex:1,minWidth:w||80}}>
+    <div style={{fontSize:9,color:S.mt,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</div>
+    <div style={{fontSize:14,fontWeight:800,color:color||S.ac,fontFamily:"monospace",marginTop:1}}>{value}</div>
+    {unit&&<div style={{fontSize:9,color:S.mt}}>{unit}</div>}
+  </div>
+);
+const Badge=({text,color})=><span style={{padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:700,background:`${color}18`,color,border:`1px solid ${color}30`}}>{text}</span>;
+const Tab=({active,onClick,children})=><button onClick={onClick} style={{padding:"8px 14px",border:"none",cursor:"pointer",fontSize:11,fontWeight:active?700:500,background:active?"#1a2440":"transparent",color:active?"#f59e0b":"#6b7a90",borderBottom:active?"2px solid #f59e0b":"2px solid transparent",whiteSpace:"nowrap"}}>{children}</button>;
+const Card=({title,accent,children})=>(
+  <div style={{background:S.c1,borderRadius:8,border:`1px solid ${S.bd}`,overflow:"hidden"}}>
+    {title&&<div style={{padding:"10px 14px",borderBottom:`1px solid ${S.bd}`,display:"flex",alignItems:"center",gap:6}}>
+      <div style={{width:3,height:14,background:accent||S.ac,borderRadius:2}} />
+      <span style={{fontSize:11,fontWeight:700,color:S.tx,textTransform:"uppercase",letterSpacing:"0.4px"}}>{title}</span>
+    </div>}
+    <div style={{padding:14}}>{children}</div>
+  </div>
+);
+const TT={contentStyle:{background:S.c2,border:`1px solid ${S.bd}`,borderRadius:6,fontSize:11,color:S.tx}};
+
+// Risk Matrix
+function RiskMx({items,hl}){
+  const rows=[5,4,3,2,1],cols=["A","B","C","D","E"];
+  const cc=(r,c)=>{const s=r+{A:1,B:2,C:3,D:4,E:5}[c];return s<=3?"#065f46":s<=5?"#78350f":s<=7?"#9a3412":"#991b1b";};
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"28px repeat(5,1fr)",gap:2}}>
+        <div />{cols.map(c=><div key={c} style={{textAlign:"center",fontSize:10,fontWeight:700,color:S.dm}}>{c}</div>)}
+        {rows.map(r=><>
+          <div key={`l${r}`} style={{display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:S.dm}}>{r}</div>
+          {cols.map(c=>{const ci=(items||[]).filter(i=>i.risk.pc===r&&i.risk.cc===c);const on=hl&&hl.risk?.pc===r&&hl.risk?.cc===c;
+            return(<div key={`${r}${c}`} style={{background:cc(r,c),borderRadius:3,minHeight:30,padding:2,display:"flex",flexWrap:"wrap",alignItems:"center",justifyContent:"center",gap:2,border:on?"2px solid #fff":"1px solid rgba(255,255,255,0.05)"}}>
+              {ci.map((it,i)=><div key={i} title={it.id} style={{width:6,height:6,background:"#fff",borderRadius:"50%",opacity:on&&it.id===hl.id?1:0.5}} />)}
+            </div>);})}
+        </>)}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:S.mt,marginTop:3}}><span>↑ POF</span><span>COF →</span></div>
+    </div>
+  );
+}
+
+// ================================================================
+// MAIN APP
+// ================================================================
+function App(){
+  const [tab,setTab]=useState("analytics");
+  const [eqList,setEqList]=useState(INIT_EQ);
+  const [selId,setSelId]=useState(null);
+  const [mgmt,setMgmt]=useState({lead:50,psi:60,pha:70,moc:55,proc:60,safe:60,train:75,mi:90,pssr:40,emerg:45,inc:55,contr:30,audit:25});
+  const [showAdd,setShowAdd]=useState(false);
+  const [riskTgt,setRiskTgt]=useState(5.0);
+  const [corrEnv,setCorrEnv]=useState("sulfidation");
+  const [corrIn,setCorrIn]=useState({temperature:300,h2s_pct:1,material:"carbon_steel",tan:1.0,velocity:5,co2_pp:200,ph:5,hcl_ppm:50,has_water:true,climate:"humid",has_insulation:false,operating_temp:80,coating:"fair",amine_type:"DEA",concentration:20});
+  const [newEq,setNewEq]=useState({id:"",name:"",unit:"",comp:"DRUM",tNom:20,tMin:10,corrRate:0.15,age:10,conf:"medium",fluid:"C6",P:1000,T:100,T_min:0,inv:2000,matGrp:"carbon_steel",matSpec:"",scc:"low",hasInsul:false,climate:"humid",coat:"fair",det:"B",iso:"B",h2pp:0,refT:-20,pwht:true,cyclicService:false,hasH2S:false,hasCaustic:false,hasAmine:false,hasCl:false,hasCO2:false,hasWater:false,TAN:0,velocity:3,insp:[]});
+
+  const fmsR=useMemo(()=>calcFMS(mgmt),[mgmt]);
+  const assessed=useMemo(()=>{
+    return eqList.map(eq=>{
+      const df=calcAllDF(eq,eq.insp);
+      const g=GFF[eq.comp];if(!g)return null;
+      const pof=Math.min(g.t*fmsR.fms*df.tot,1);
+      const cofR=calcCOF(eq.fluid,eq.P,eq.T,eq.inv,eq.comp,eq.det,eq.iso);
+      const risk=rCat(pof,cofR.ca);
+      const rFin=pof*cofR.fin;
+      return{...eq,...df,pof,cof:cofR.ca,cofFin:cofR.fin,cofMit:cofR.mit,cofMap:cofR.caMap,risk,riskVal:pof*cofR.ca,riskFin:rFin};
+    }).filter(Boolean).sort((a,b)=>b.riskFin-a.riskFin);
+  },[eqList,fmsR.fms]);
+
+  const sel=assessed.find(a=>a.id===selId);
+  const updNew=(k,v)=>setNewEq(p=>({...p,[k]:v}));
+  const addEq=()=>{if(!newEq.id||!newEq.name)return;setEqList(p=>[...p,{...newEq}]);setShowAdd(false);};
+  const rmEq=id=>{setEqList(p=>p.filter(e=>e.id!==id));if(selId===id)setSelId(null);};
+
+  // Inspection CRUD for selected equipment
+  const addInsp=()=>{if(!selId)return;setEqList(p=>p.map(eq=>eq.id===selId?{...eq,insp:[...eq.insp,{id:Date.now(),eff:"C",type:"thinning",date:new Date().toISOString().slice(0,10),method:"",desc:""}]}:eq));};
+  const rmInsp=(iid)=>{setEqList(p=>p.map(eq=>eq.id===selId?{...eq,insp:eq.insp.filter(i=>i.id!==iid)}:eq));};
+  const updInsp=(iid,k,v)=>{setEqList(p=>p.map(eq=>eq.id===selId?{...eq,insp:eq.insp.map(i=>i.id===iid?{...i,[k]:v}:i)}:eq));};
+
+  const stats=useMemo(()=>({n:assessed.length,hi:assessed.filter(a=>a.risk.lv==="High").length,mh:assessed.filter(a=>a.risk.lv==="Medium-High").length,md:assessed.filter(a=>a.risk.lv==="Medium").length,lo:assessed.filter(a=>a.risk.lv==="Low").length,tr:assessed.reduce((s,a)=>s+a.riskFin,0),mrl:assessed.length?Math.min(...assessed.map(a=>a.rl)):0}),[assessed]);
+
+  // ================================================================
+  // TAB 1: ANALYTICS DASHBOARD
+  // ================================================================
+  const renderAnalytics=()=>{
+    const rdist=[{name:"High",value:stats.hi,color:"#ef4444"},{name:"Med-Hi",value:stats.mh,color:"#f97316"},{name:"Medium",value:stats.md,color:"#eab308"},{name:"Low",value:stats.lo,color:"#10b981"}].filter(d=>d.value>0);
+    const pareto=assessed.slice(0,10).map(a=>({name:a.id,risk:Math.round(a.riskFin),lv:a.risk.lv}));
+    const cum=pareto.reduce((acc,d,i)=>{const p=i>0?acc[i-1].c:0;acc.push({...d,c:p+d.risk});return acc;},[]);
+    const tt=cum.length?cum[cum.length-1].c:1;
+    const pw=cum.map(d=>({...d,pct:Math.round(d.c/tt*100)}));
+    const dfBk=assessed.map(a=>({name:a.id,Thin:a.all.find(d=>d.name==="Thinning")?.df||1,Ext:a.all.find(d=>d.name==="External Corr")?.df||1,CUI:a.all.find(d=>d.name==="CUI")?.df||1,SCC:a.all.find(d=>d.name==="SCC")?.df||1,HTHA:a.all.find(d=>d.name==="HTHA")?.df||1}));
+    const rlD=assessed.map(a=>({name:a.id,rl:Math.min(a.rl,30),lv:a.risk.lv})).sort((a,b)=>a.rl-b.rl);
+    const uRisk={};assessed.forEach(a=>{if(!uRisk[a.unit])uRisk[a.unit]={unit:a.unit,risk:0,cnt:0};uRisk[a.unit].risk+=a.riskFin;uRisk[a.unit].cnt++;});
+    return(
+      <div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+          <Box w={95} label="Equipment" value={stats.n} color="#3b82f6" /><Box w={95} label="High Risk" value={stats.hi} color="#ef4444" /><Box w={95} label="Med-High" value={stats.mh} color="#f97316" /><Box w={95} label="Medium" value={stats.md} color="#eab308" /><Box w={95} label="Low" value={stats.lo} color="#10b981" /><Box w={110} label="Total Risk" value={`$${(stats.tr/1000).toFixed(0)}K`} unit="/year" /><Box w={95} label="Min RL" value={`${stats.mrl.toFixed(1)}yr`} color={stats.mrl<3?"#ef4444":"#10b981"} /><Box w={95} label="FMS" value={fmsR.fms.toFixed(3)} color={fmsR.fms>1?"#ef4444":"#10b981"} />
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Card title="Risk Distribution" accent="#3b82f6"><ResponsiveContainer width="100%" height={170}><PieChart><Pie data={rdist} cx="50%" cy="50%" outerRadius={65} innerRadius={38} dataKey="value" label={({name,value})=>`${name}:${value}`}>{rdist.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip {...TT}/></PieChart></ResponsiveContainer></Card>
+          <Card title="Risk Pareto ($/yr)" accent="#f59e0b"><ResponsiveContainer width="100%" height={170}><BarChart data={pw} margin={{top:5,right:30,left:0,bottom:5}}><XAxis dataKey="name" tick={{fontSize:9,fill:S.dm}}/><YAxis yAxisId="l" tick={{fontSize:9,fill:S.dm}}/><YAxis yAxisId="r" orientation="right" domain={[0,100]} tick={{fontSize:9,fill:S.dm}}/><Tooltip {...TT}/><Bar yAxisId="l" dataKey="risk" fill="#f59e0b" radius={[3,3,0,0]}/><Line yAxisId="r" type="monotone" dataKey="pct" stroke="#ef4444" strokeWidth={2} dot={{r:2}}/></BarChart></ResponsiveContainer></Card>
+          <Card title="Damage Factor Breakdown (Log)" accent="#8b5cf6"><ResponsiveContainer width="100%" height={170}><BarChart data={dfBk} margin={{top:5,right:5,left:0,bottom:5}}><XAxis dataKey="name" tick={{fontSize:9,fill:S.dm}}/><YAxis tick={{fontSize:9,fill:S.dm}} scale="log" domain={[1,'auto']}/><Tooltip {...TT}/><Bar dataKey="Thin" stackId="a" fill="#3b82f6"/><Bar dataKey="Ext" stackId="a" fill="#06b6d4"/><Bar dataKey="CUI" stackId="a" fill="#8b5cf6"/><Bar dataKey="SCC" stackId="a" fill="#ec4899"/><Bar dataKey="HTHA" stackId="a" fill="#ef4444"/><Legend wrapperStyle={{fontSize:9}}/></BarChart></ResponsiveContainer></Card>
+          <Card title="Remaining Life (years)" accent="#10b981"><ResponsiveContainer width="100%" height={170}><BarChart data={rlD} margin={{top:5,right:5,left:0,bottom:5}}><XAxis dataKey="name" tick={{fontSize:9,fill:S.dm}}/><YAxis tick={{fontSize:9,fill:S.dm}}/><CartesianGrid strokeDasharray="3 3" stroke={S.bd}/><Tooltip {...TT}/><Bar dataKey="rl" radius={[3,3,0,0]}>{rlD.map((d,i)=><Cell key={i} fill={d.rl<3?"#ef4444":d.rl<5?"#f97316":d.rl<10?"#eab308":"#10b981"}/>)}</Bar></BarChart></ResponsiveContainer></Card>
+          <Card title="5×5 Risk Matrix" accent={S.ac}><RiskMx items={assessed} hl={sel}/><div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>{[["Low","#065f46"],["Med","#78350f"],["M-Hi","#9a3412"],["High","#991b1b"]].map(([l,c])=><div key={l} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,color:S.mt}}><div style={{width:8,height:8,background:c,borderRadius:2}}/>{l}</div>)}</div></Card>
+          <Card title="Risk by Unit" accent="#06b6d4"><ResponsiveContainer width="100%" height={170}><BarChart data={Object.values(uRisk).sort((a,b)=>b.risk-a.risk)} layout="vertical" margin={{top:5,right:20,left:60,bottom:5}}><XAxis type="number" tick={{fontSize:9,fill:S.dm}}/><YAxis type="category" dataKey="unit" tick={{fontSize:10,fill:S.tx}}/><Tooltip {...TT}/><Bar dataKey="risk" fill="#06b6d4" radius={[0,3,3,0]} name="Risk ($/yr)"/></BarChart></ResponsiveContainer></Card>
+        </div>
+      </div>
+    );
+  };
+
+  // ================================================================
+  // TAB 2: DATA ENTRY + EQUIPMENT REGISTRY
+  // ================================================================
+  const renderEntry=()=>(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:700,color:S.tx}}>Equipment Registry ({eqList.length})</span>
+        <button onClick={()=>setShowAdd(!showAdd)} style={{padding:"6px 14px",background:showAdd?"#991b1b":"#1e40af",border:"none",borderRadius:5,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer"}}>{showAdd?"✕ Cancel":"+ Add Equipment"}</button>
+      </div>
+      {showAdd&&(
+        <div style={{background:S.c1,borderRadius:8,border:`2px solid #1e40af`,padding:14,marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#60a5fa",marginBottom:10,textTransform:"uppercase"}}>New Equipment</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"0 12px"}}>
+            <Inp label="Tag *" value={newEq.id} onChange={v=>updNew("id",v)} type="text" placeholder="V-101" />
+            <Inp label="Name *" value={newEq.name} onChange={v=>updNew("name",v)} type="text" placeholder="Overhead Accumulator" />
+            <Inp label="Unit" value={newEq.unit} onChange={v=>updNew("unit",v)} type="text" placeholder="CDU" />
+            <Sel label="Component Type" value={newEq.comp} onChange={v=>updNew("comp",v)} options={Object.entries(GFF).map(([k,v])=>({v:k,l:`${k} — ${v.n}`}))} hint="API 581 Table 3.1" />
+            <Inp label="Nom. Thick (mm)" value={newEq.tNom} onChange={v=>updNew("tNom",v)} step={0.1}/><Inp label="Min Req'd (mm)" value={newEq.tMin} onChange={v=>updNew("tMin",v)} step={0.1}/>
+            <Inp label="Corr Rate (mm/yr)" value={newEq.corrRate} onChange={v=>updNew("corrRate",v)} step={0.01} hint="Use Corr Rate Calc"/><Inp label="Age (yr)" value={newEq.age} onChange={v=>updNew("age",v)} step={1}/>
+            <Sel label="Material" value={newEq.matGrp} onChange={v=>updNew("matGrp",v)} options={[{v:"carbon_steel",l:"Carbon Steel"},{v:"low_alloy",l:"Low Alloy"},{v:"2.25Cr",l:"2.25Cr-1Mo"},{v:"stainless_300",l:"300 SS"},{v:"stainless_400",l:"400 SS"},{v:"stainless_duplex",l:"Duplex"},{v:"nickel_alloy",l:"Nickel"}]} />
+            <Sel label="SCC Suscept." value={newEq.scc} onChange={v=>updNew("scc",v)} options={["none","low","medium","high","very high"].map(v=>({v,l:v}))} />
+            <Sel label="Rate Confidence" value={newEq.conf} onChange={v=>updNew("conf",v)} options={[{v:"low",l:"Low"},{v:"medium",l:"Medium"},{v:"high",l:"High"}]} />
+            <Sel label="Fluid" value={newEq.fluid} onChange={v=>updNew("fluid",v)} options={Object.entries(FLUIDS).map(([k,v])=>({v:k,l:v.n}))} />
+            <Inp label="Pressure (kPa)" value={newEq.P} onChange={v=>updNew("P",v)}/><Inp label="Op Temp (°C)" value={newEq.T} onChange={v=>updNew("T",v)}/>
+            <Inp label="Min Temp (°C)" value={newEq.T_min} onChange={v=>updNew("T_min",v)}/><Inp label="Inventory (kg)" value={newEq.inv} onChange={v=>updNew("inv",v)}/>
+            <Inp label="H₂ pp (kPa)" value={newEq.h2pp} onChange={v=>updNew("h2pp",v)} hint="For HTHA"/><Inp label="TAN" value={newEq.TAN} onChange={v=>updNew("TAN",v)} step={0.1}/>
+            <Sel label="Detection" value={newEq.det} onChange={v=>updNew("det",v)} options={[{v:"A",l:"A-Continuous"},{v:"B",l:"B-Periodic"},{v:"C",l:"C-None"}]} />
+            <Sel label="Isolation" value={newEq.iso} onChange={v=>updNew("iso",v)} options={[{v:"A",l:"A-Remote"},{v:"B",l:"B-Manual"},{v:"C",l:"C-None"}]} />
+            <Sel label="Climate" value={newEq.climate} onChange={v=>updNew("climate",v)} options={["arid","temperate","humid","marine"].map(v=>({v,l:v}))} />
+            <Sel label="Coating" value={newEq.coat} onChange={v=>updNew("coat",v)} options={[{v:"good",l:"Good"},{v:"fair",l:"Fair"},{v:"poor",l:"Poor"}]} />
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",margin:"6px 0 10px"}}>
+            <Chk label="Insulated" checked={newEq.hasInsul} onChange={v=>updNew("hasInsul",v)}/><Chk label="PWHT" checked={newEq.pwht} onChange={v=>updNew("pwht",v)}/>
+            <Chk label="H₂S" checked={newEq.hasH2S} onChange={v=>updNew("hasH2S",v)}/><Chk label="Caustic" checked={newEq.hasCaustic} onChange={v=>updNew("hasCaustic",v)}/>
+            <Chk label="Amine" checked={newEq.hasAmine} onChange={v=>updNew("hasAmine",v)}/><Chk label="Chlorides" checked={newEq.hasCl} onChange={v=>updNew("hasCl",v)}/>
+            <Chk label="CO₂" checked={newEq.hasCO2} onChange={v=>updNew("hasCO2",v)}/><Chk label="Water" checked={newEq.hasWater} onChange={v=>updNew("hasWater",v)}/>
+            <Chk label="Cyclic" checked={newEq.cyclicService} onChange={v=>updNew("cyclicService",v)}/>
+          </div>
+          <button onClick={addEq} disabled={!newEq.id||!newEq.name} style={{padding:"8px 20px",background:newEq.id&&newEq.name?"#059669":"#334155",border:"none",borderRadius:5,color:"#fff",fontSize:11,fontWeight:700,cursor:newEq.id&&newEq.name?"pointer":"not-allowed"}}>✓ Add & Calculate Risk</button>
+        </div>
+      )}
+      <div style={{background:S.c1,borderRadius:8,border:`1px solid ${S.bd}`,overflow:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead><tr style={{borderBottom:`2px solid ${S.bd}`,background:S.c2}}>
+            {["#","Tag","Name","Unit","Type","CR","RL","POF","COF","Risk",""].map((h,i)=><th key={i} style={{padding:"7px 8px",textAlign:"left",color:S.dm,fontWeight:600,fontSize:10,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{assessed.map((a,i)=>(
+            <tr key={a.id} onClick={()=>setSelId(a.id)} style={{borderBottom:`1px solid ${S.bd}`,cursor:"pointer",background:selId===a.id?`${S.ac}08`:"transparent"}}>
+              <td style={{padding:"6px 8px",color:S.mt}}>{i+1}</td>
+              <td style={{padding:"6px 8px",fontWeight:700,fontFamily:"monospace",color:S.tx}}>{a.id}</td>
+              <td style={{padding:"6px 8px",color:S.tx,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</td>
+              <td style={{padding:"6px 8px",color:S.dm,fontSize:10}}>{a.unit}</td>
+              <td style={{padding:"6px 8px",color:S.dm,fontSize:10}}>{a.comp}</td>
+              <td style={{padding:"6px 8px",fontFamily:"monospace",color:a.corrRate>0.3?"#ef4444":"#eab308"}}>{a.corrRate}</td>
+              <td style={{padding:"6px 8px",fontFamily:"monospace",fontWeight:700,color:a.rl<3?"#ef4444":a.rl<5?"#f97316":"#10b981"}}>{a.rl.toFixed(1)}</td>
+              <td style={{padding:"6px 8px",fontFamily:"monospace",fontSize:10}}>{a.pof.toExponential(1)}</td>
+              <td style={{padding:"6px 8px",fontFamily:"monospace",fontSize:10}}>{a.cof.toFixed(0)}</td>
+              <td style={{padding:"6px 8px"}}><Badge text={a.risk.lv} color={RC[a.risk.lv]}/></td>
+              <td style={{padding:"6px 8px"}}><button onClick={e=>{e.stopPropagation();rmEq(a.id)}} style={{background:"transparent",border:`1px solid #991b1b`,color:"#ef4444",borderRadius:3,padding:"2px 5px",cursor:"pointer",fontSize:9}}>✕</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // ================================================================
+  // TAB 3: EQUIPMENT DETAIL + INSPECTION PLAN + INSPECTION HISTORY
+  // ================================================================
+  const renderDetail=()=>{
+    if(!sel) return <div style={{padding:40,textAlign:"center",color:S.dm}}>Select equipment from Data Entry or Analytics to view detail.</div>;
+    const a=sel;
+    const ip=calcInspPlan(a.pof,a.cof,a.tot,a.corrRate,a.tA,a.tMin,riskTgt,a.comp,fmsR.fms);
+    return(
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <span style={{fontSize:16,fontWeight:800,fontFamily:"monospace",color:S.tx}}>{a.id}</span>
+          <span style={{fontSize:13,color:S.dm}}>{a.name}</span>
+          <Badge text={a.risk.lv} color={RC[a.risk.lv]}/>
+          <Badge text={`${a.risk.pc}${a.risk.cc}`} color={S.ac}/>
+          <Badge text={`RL: ${a.rl.toFixed(1)}yr`} color={a.rl<3?"#ef4444":a.rl<5?"#f97316":"#10b981"}/>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+          <Box label="POF" value={a.pof.toExponential(2)} unit="fail/yr"/><Box label="COF" value={a.cof.toFixed(0)} unit="ft²"/>
+          <Box label="Risk $" value={`$${a.riskFin.toFixed(0)}`} unit="/yr" color={RC[a.risk.lv]}/><Box label="Total DF" value={a.tot.toFixed(1)} color={a.tot>100?"#ef4444":a.tot>10?"#f97316":"#10b981"}/>
+          <Box label="Wall Loss" value={`${a.wl.toFixed(2)}mm`}/><Box label="Actual t" value={`${a.tA.toFixed(2)}mm`}/><Box label="Art" value={a.Art.toFixed(3)}/>
+        </div>
+        <div style={{background:"#080d17",borderRadius:6,padding:"10px 14px",marginBottom:14,fontFamily:"monospace",fontSize:12,color:S.ac,border:`1px solid ${S.bd}`}}>
+          <span style={{color:S.dm}}>Pf(t) = gff × FMS × Df = </span>{(GFF[a.comp]?.t||0).toExponential(2)}<span style={{color:S.dm}}> × </span>{fmsR.fms.toFixed(3)}<span style={{color:S.dm}}> × </span>{a.tot.toFixed(1)}<span style={{color:S.dm}}> = </span><span style={{color:"#fff",fontWeight:700}}>{a.pof.toExponential(3)}</span>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          {/* All Damage Factors */}
+          <Card title="Damage Factors (API 581 Part 2)" accent="#8b5cf6">
+            {a.all.map((d,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${S.bd}`}}>
+                <span style={{fontSize:11,color:d.df>1?S.tx:S.mt}}>{d.name}</span>
+                <span style={{fontSize:12,fontFamily:"monospace",fontWeight:700,color:d.df>100?"#ef4444":d.df>10?"#f97316":d.df>1?"#eab308":"#334155"}}>{d.df.toFixed(1)}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontWeight:700}}>
+              <span style={{color:S.ac}}>Total DF</span><span style={{fontFamily:"monospace",fontSize:14,color:S.ac}}>{a.tot.toFixed(1)}</span>
+            </div>
+          </Card>
+
+          {/* Inspection Plan Optimizer */}
+          <Card title="Inspection Plan Optimizer" accent="#3b82f6">
+            <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+              <span style={{fontSize:10,color:S.dm}}>Target:</span>
+              <input type="range" min={0.1} max={20} step={0.1} value={riskTgt} onChange={e=>setRiskTgt(+e.target.value)} style={{flex:1,accentColor:S.ac}}/>
+              <span style={{fontFamily:"monospace",fontSize:12,color:S.ac,fontWeight:700}}>{riskTgt.toFixed(1)}</span>
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+              <Box label="Max Interval" value={`${ip.mx.toFixed(1)}yr`} color="#3b82f6"/><Box label="Req'd Eff" value={ip.re} unit={IE[ip.re]?.n} color="#3b82f6"/><Box label="Next Due" value={new Date(Date.now()+ip.mx*365.25*86400000).toISOString().slice(0,10)} color={S.ac}/>
+            </div>
+            <div style={{fontSize:10,color:S.dm,marginBottom:4}}>Risk projection:</div>
+            <div style={{display:"flex",gap:1,height:60,alignItems:"flex-end"}}>
+              {ip.pts.filter((_,i)=>i%2===0).map((pt,i)=>{const h=Math.min(Math.max(Math.log10(Math.max(pt.risk,0.001))+3,0)/5*100,100);
+                return <div key={i} title={`Yr ${pt.year}: Risk=${pt.risk.toFixed(3)}`} style={{flex:1,background:pt.risk>riskTgt?"#ef4444":"#3b82f6",height:`${h}%`,borderRadius:"2px 2px 0 0",minWidth:3,opacity:pt.risk>riskTgt?1:0.6}}/>;
+              })}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:S.mt,marginTop:2}}><span>Now</span><span>10yr</span><span>20yr</span></div>
+            <div style={{marginTop:8,background:"#080d17",borderRadius:6,padding:8,fontSize:10}}>
+              <div style={{fontWeight:700,color:S.tx,marginBottom:4}}>Recommended:</div>
+              <div style={{color:S.dm}}>Method: <span style={{color:S.tx}}>{a.scc!=="none"&&a.scc!=="low"?"WFMT + UT Scanning":"UT Thickness Survey"}</span></div>
+              <div style={{color:S.dm}}>Effectiveness: <span style={{color:"#3b82f6",fontWeight:700}}>{ip.re} — {IE[ip.re]?.n}</span></div>
+              {a.rl<5&&<div style={{color:"#ef4444",fontWeight:700,marginTop:4}}>⚠ RL &lt; 5yr — prioritize replacement</div>}
+              {a.all.find(d=>d.name==="HTHA")?.df>1&&<div style={{color:"#ef4444",marginTop:2}}>⚠ HTHA active — consider AUBT</div>}
+            </div>
+          </Card>
+
+          {/* COF Details */}
+          <Card title="Consequence Analysis (Level 1)" accent="#ef4444">
+            <div style={{fontSize:11}}>
+              {[["Fluid",FLUIDS[a.fluid]?.n],["Pressure",`${a.P} kPa`],["Temperature",`${a.T} °C`],["Inventory",`${a.inv} kg`],["Detection",a.det],["Isolation",a.iso],["Mitigation",a.cofMit?.toFixed(2)],["COF Area",`${a.cof.toFixed(0)} ft²`],["COF Category",a.risk.cc],["COF Financial",`$${(a.cofFin/1000).toFixed(0)}K`]].map(([k,v],i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${S.bd}`}}>
+                  <span style={{color:S.dm}}>{k}</span><span style={{color:S.tx,fontWeight:600}}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Inspection History */}
+          <Card title="Inspection History" accent="#10b981">
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                <thead><tr style={{borderBottom:`1px solid ${S.bd}`}}>
+                  {["Date","Type","Eff","Method","Notes",""].map((h,i)=><th key={i} style={{padding:"4px 6px",textAlign:"left",color:S.dm,fontSize:9,textTransform:"uppercase"}}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {(sel?.insp||[]).map(ins=>(
+                    <tr key={ins.id} style={{borderBottom:`1px solid ${S.bd}`}}>
+                      <td style={{padding:"4px 6px"}}><input type="date" value={ins.date} onChange={e=>updInsp(ins.id,"date",e.target.value)} style={{background:S.ib,border:`1px solid ${S.bd}`,borderRadius:3,color:S.tx,padding:"3px 5px",fontSize:11,width:110}}/></td>
+                      <td style={{padding:"4px 6px"}}><select value={ins.type} onChange={e=>updInsp(ins.id,"type",e.target.value)} style={{background:S.ib,border:`1px solid ${S.bd}`,borderRadius:3,color:S.tx,padding:"3px",fontSize:11}}>
+                        {["thinning","cracking","external","other"].map(t=><option key={t} value={t}>{t}</option>)}
+                      </select></td>
+                      <td style={{padding:"4px 6px"}}><select value={ins.eff} onChange={e=>updInsp(ins.id,"eff",e.target.value)} style={{background:S.ib,border:`1px solid ${S.bd}`,borderRadius:3,color:S.tx,padding:"3px",fontSize:11}}>
+                        {Object.entries(IE).map(([k,v])=><option key={k} value={k}>{k}-{v.n}</option>)}
+                      </select></td>
+                      <td style={{padding:"4px 6px"}}><input value={ins.method} onChange={e=>updInsp(ins.id,"method",e.target.value)} placeholder="NDE method" style={{background:S.ib,border:`1px solid ${S.bd}`,borderRadius:3,color:S.tx,padding:"3px 5px",fontSize:11,width:100}}/></td>
+                      <td style={{padding:"4px 6px"}}><input value={ins.desc} onChange={e=>updInsp(ins.id,"desc",e.target.value)} placeholder="Notes" style={{background:S.ib,border:`1px solid ${S.bd}`,borderRadius:3,color:S.tx,padding:"3px 5px",fontSize:11,width:"100%",boxSizing:"border-box"}}/></td>
+                      <td style={{padding:"4px 6px"}}><button onClick={()=>rmInsp(ins.id)} style={{background:"transparent",border:`1px solid #991b1b`,color:"#ef4444",borderRadius:3,padding:"2px 5px",cursor:"pointer",fontSize:9}}>✕</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={addInsp} style={{marginTop:8,padding:"5px 12px",background:"#1e40af",border:"none",borderRadius:4,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer"}}>+ Add Inspection</button>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  // ================================================================
+  // TAB 4: DAMAGE MECHANISM SCREENING
+  // ================================================================
+  const renderDM=()=>{
+    if(!sel) return <div style={{padding:40,textAlign:"center",color:S.dm}}>Select equipment first.</div>;
+    const res=DM_RULES.map(dm=>({...dm,on:dm.chk(sel)}));
+    const catCol={thinning:"#3b82f6",cracking:"#ec4899",metallurgical:"#f97316",mechanical:"#8b5cf6",external:"#06b6d4"};
+    return(
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <span style={{fontSize:15,fontWeight:800,fontFamily:"monospace"}}>{sel.id}</span><span style={{color:S.dm}}>{sel.name}</span>
+          <Badge text={`${res.filter(r=>r.on).length} Active DMs`} color="#3b82f6"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Card title={`Active / Credible (${res.filter(r=>r.on).length})`} accent="#ef4444">
+            {res.filter(r=>r.on).map(dm=>(
+              <div key={dm.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${S.bd}`}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:catCol[dm.cat],flexShrink:0}}/>
+                <span style={{flex:1,fontSize:11,color:S.tx}}>{dm.n}</span>
+                <span style={{padding:"1px 6px",borderRadius:3,fontSize:9,background:`${catCol[dm.cat]}20`,color:catCol[dm.cat]}}>{dm.cat}</span>
+              </div>
+            ))}
+          </Card>
+          <Card title={`Screened Out (${res.filter(r=>!r.on).length})`} accent="#10b981">
+            {res.filter(r=>!r.on).map(dm=>(
+              <div key={dm.id} style={{padding:"4px 0",borderBottom:`1px solid ${S.bd}`,fontSize:11,color:S.mt}}>{dm.n}</div>
+            ))}
+          </Card>
+          <Card title="Damage Factor Cards" accent={S.ac}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
+              {sel.all.map((d,i)=>(
+                <div key={i} style={{background:"#080d17",borderRadius:6,padding:8,border:`1px solid ${d.df>10?`${S.ac}40`:S.bd}`,textAlign:"center"}}>
+                  <div style={{fontSize:9,color:S.mt}}>{d.name}</div>
+                  <div style={{fontSize:16,fontWeight:800,fontFamily:"monospace",color:d.df>100?"#ef4444":d.df>10?"#f97316":d.df>1?"#eab308":"#334155"}}>{d.df.toFixed(1)}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+          <Card title="Recommendations" accent="#10b981">
+            <div style={{fontSize:11,color:S.dm}}>
+              {sel.rl<3&&<div style={{color:"#ef4444",marginBottom:4}}>🔴 RL &lt; 3yr: Schedule replacement</div>}
+              {sel.rl>=3&&sel.rl<5&&<div style={{color:"#f97316",marginBottom:4}}>🟠 RL &lt; 5yr: Plan for next TA</div>}
+              {sel.scc!=="none"&&sel.scc!=="low"&&<div style={{color:"#eab308",marginBottom:4}}>🟡 SCC risk: Add WFMT/TOFD inspections</div>}
+              {sel.all.find(d=>d.name==="HTHA")?.df>1&&<div style={{color:"#ef4444",marginBottom:4}}>🔴 HTHA: Advanced UT backscatter</div>}
+              {sel.all.find(d=>d.name==="CUI")?.df>10&&<div style={{color:"#eab308",marginBottom:4}}>🟡 CUI: Strip insulation for inspection</div>}
+              {sel.risk.lv==="Low"&&<div style={{color:"#10b981"}}>🟢 Acceptable risk level</div>}
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  // ================================================================
+  // TAB 5: CORROSION RATE CALCULATOR
+  // ================================================================
+  const renderCorr=()=>{
+    const env=CORR_ENV[corrEnv];
+    let res;
+    try{
+      if(corrEnv==="sulfidation")res=env.calc(corrIn.temperature,corrIn.h2s_pct,corrIn.material);
+      else if(corrEnv==="naphthenic")res=env.calc(corrIn.temperature,corrIn.tan,corrIn.velocity,corrIn.material);
+      else if(corrEnv==="co2")res=env.calc(corrIn.temperature,corrIn.co2_pp,corrIn.ph,corrIn.material);
+      else if(corrEnv==="hcl")res=env.calc(corrIn.temperature,corrIn.hcl_ppm,corrIn.has_water,corrIn.material);
+      else if(corrEnv==="wet_h2s")res=env.calc(corrIn.temperature,corrIn.h2s_pct*1000,corrIn.ph);
+      else if(corrEnv==="amine")res=env.calc(corrIn.temperature,corrIn.amine_type,corrIn.concentration,corrIn.velocity,corrIn.material);
+      else if(corrEnv==="atmospheric")res=env.calc(corrIn.climate,corrIn.has_insulation,corrIn.operating_temp,corrIn.coating);
+    }catch(e){res={rate:0,note:e.message};}
+
+    const sens=[];for(let t=100;t<=500;t+=20){let r;try{if(corrEnv==="sulfidation")r=CORR_ENV.sulfidation.calc(t,corrIn.h2s_pct,corrIn.material);else if(corrEnv==="naphthenic")r=CORR_ENV.naphthenic.calc(t,corrIn.tan,corrIn.velocity,corrIn.material);else r={rate:0};}catch(e){r={rate:0};}sens.push({temp:t,rate:r.rate});}
+
+    return(
+      <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:12}}>
+        <div>
+          <Card title="Environment" accent="#3b82f6">
+            <Sel label="Mechanism" value={corrEnv} onChange={setCorrEnv} options={Object.entries(CORR_ENV).map(([k,v])=>({v:k,l:v.name}))} hint={env?.ref}/>
+          </Card>
+          <div style={{marginTop:12}}><Card title="Inputs" accent="#8b5cf6">
+            <Sel label="Material" value={corrIn.material} onChange={v=>setCorrIn(p=>({...p,material:v}))} options={[{v:"carbon_steel",l:"Carbon Steel"},{v:"5Cr",l:"5Cr"},{v:"9Cr",l:"9Cr"},{v:"316SS",l:"316SS"},{v:"low_alloy",l:"Low Alloy"}]}/>
+            <Inp label="Temperature (°C)" value={corrIn.temperature} onChange={v=>setCorrIn(p=>({...p,temperature:v}))}/>
+            {(corrEnv==="sulfidation"||corrEnv==="wet_h2s")&&<Inp label="H₂S (%)" value={corrIn.h2s_pct} onChange={v=>setCorrIn(p=>({...p,h2s_pct:v}))} step={0.1}/>}
+            {corrEnv==="naphthenic"&&<><Inp label="TAN" value={corrIn.tan} onChange={v=>setCorrIn(p=>({...p,tan:v}))} step={0.1}/><Inp label="Velocity (m/s)" value={corrIn.velocity} onChange={v=>setCorrIn(p=>({...p,velocity:v}))}/></>}
+            {corrEnv==="co2"&&<><Inp label="CO₂ pp (kPa)" value={corrIn.co2_pp} onChange={v=>setCorrIn(p=>({...p,co2_pp:v}))}/><Inp label="pH" value={corrIn.ph} onChange={v=>setCorrIn(p=>({...p,ph:v}))} step={0.1}/></>}
+            {corrEnv==="hcl"&&<Inp label="HCl (ppm)" value={corrIn.hcl_ppm} onChange={v=>setCorrIn(p=>({...p,hcl_ppm:v}))}/>}
+            {corrEnv==="atmospheric"&&<><Sel label="Climate" value={corrIn.climate} onChange={v=>setCorrIn(p=>({...p,climate:v}))} options={["arid","temperate","humid","marine"].map(v=>({v,l:v}))}/><Chk label="Insulated" checked={corrIn.has_insulation} onChange={v=>setCorrIn(p=>({...p,has_insulation:v}))}/><Sel label="Coating" value={corrIn.coating} onChange={v=>setCorrIn(p=>({...p,coating:v}))} options={[{v:"good",l:"Good"},{v:"fair",l:"Fair"},{v:"poor",l:"Poor"}]}/></>}
+          </Card></div>
+        </div>
+        <div>
+          <div style={{background:S.c1,borderRadius:8,border:`2px solid ${res?.rate>1?"#ef4444":res?.rate>0.3?S.ac:"#10b981"}`,padding:20,marginBottom:12,textAlign:"center"}}>
+            <div style={{fontSize:10,color:S.dm,textTransform:"uppercase"}}>Estimated Corrosion Rate</div>
+            <div style={{fontSize:38,fontWeight:900,fontFamily:"monospace",color:res?.rate>1?"#ef4444":res?.rate>0.3?S.ac:"#10b981"}}>{res?res.rate.toFixed(3):"—"}</div>
+            <div style={{fontSize:13,color:S.dm}}>mm/year</div>
+            {res&&<div style={{fontSize:11,color:S.tx,marginTop:8,background:"#080d17",borderRadius:6,padding:8,display:"inline-block"}}>{res.note}</div>}
+          </div>
+          <Card title="Temperature Sensitivity" accent={S.ac}>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={sens} margin={{top:5,right:20,left:0,bottom:5}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={S.bd}/><XAxis dataKey="temp" tick={{fontSize:9,fill:S.dm}} label={{value:"°C",position:"bottom",fontSize:9,fill:S.dm}}/>
+                <YAxis tick={{fontSize:9,fill:S.dm}} label={{value:"mm/yr",angle:-90,position:"left",fontSize:9,fill:S.dm}}/>
+                <Tooltip {...TT} formatter={v=>[`${v.toFixed(3)} mm/yr`,"Rate"]}/><Area type="monotone" dataKey="rate" stroke="#f59e0b" fill="#f59e0b20" strokeWidth={2}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  // ================================================================
+  // TAB 6: MANAGEMENT SYSTEMS
+  // ================================================================
+  const renderMgmt=()=>(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:12}}>
+      <Card title="PSM Evaluation (API 581 Annex 2.A)" accent={S.ac}>
+        {MGMT_AREAS.map(a=>(
+          <div key={a.id} style={{marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:11,color:S.tx}}>{a.n}</span><span style={{fontSize:11,fontFamily:"monospace",color:S.ac}}>{mgmt[a.id]||0}/{a.mx}</span></div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}><input type="range" min={0} max={a.mx} value={mgmt[a.id]||0} onChange={e=>setMgmt(p=>({...p,[a.id]:+e.target.value}))} style={{flex:1,accentColor:S.ac}}/><span style={{fontSize:10,color:S.mt,width:32,textAlign:"right"}}>{((mgmt[a.id]||0)/a.mx*100).toFixed(0)}%</span></div>
+          </div>
+        ))}
+      </Card>
+      <div>
+        <Card title="Results" accent="#10b981">
+          <Box w="100%" label="Score" value={`${fmsR.ps.toFixed(1)}%`} color={fmsR.ps>70?"#10b981":fmsR.ps>50?"#eab308":"#ef4444"}/>
+          <div style={{marginTop:8}}><Box w="100%" label="FMS Factor" value={fmsR.fms.toFixed(4)} color={fmsR.fms>1?"#ef4444":"#10b981"}/></div>
+          <div style={{marginTop:8,background:"#080d17",borderRadius:6,padding:8,fontSize:10,fontFamily:"monospace",color:S.dm}}>
+            FMS = 10^(-0.02×{fmsR.ps.toFixed(1)}+1) = <span style={{color:S.ac,fontWeight:700}}>{fmsR.fms.toFixed(4)}</span>
+          </div>
+          <div style={{marginTop:6,fontSize:10,color:fmsR.fms>1?"#ef4444":"#10b981"}}>{fmsR.fms>1?"⚠ FMS>1.0 increases all POF":"✓ FMS<1.0 reduces POF"}</div>
+        </Card>
+        <div style={{marginTop:12}}><Card title="Impact Preview" accent="#3b82f6">
+          <div style={{fontSize:11}}>{assessed.slice(0,6).map(a=>(
+            <div key={a.id} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${S.bd}`}}>
+              <span style={{fontFamily:"monospace",color:S.tx}}>{a.id}</span><Badge text={a.risk.lv} color={RC[a.risk.lv]}/>
+            </div>
+          ))}</div>
+        </Card></div>
+      </div>
+    </div>
+  );
+
+  // ================================================================
+  // RENDER
+  // ================================================================
+  const tabs=[
+    {id:"analytics",l:"📊 Analytics"},{id:"entry",l:"📝 Data Entry"},
+    {id:"detail",l:"🔧 Detail & Inspection"},{id:"dm",l:"🔬 Damage Mechanisms"},
+    {id:"corr",l:"🧪 Corr. Rate Calc"},{id:"mgmt",l:"📋 Mgmt Systems"},
+  ];
+
+  return(
+    <div style={{background:S.bg,minHeight:"100vh",color:S.tx,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}}>
+      <div style={{background:"linear-gradient(135deg,#0c1222,#162032)",borderBottom:`1px solid ${S.bd}`,padding:"9px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:32,height:32,background:"linear-gradient(135deg,#f59e0b,#b45309)",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:12,color:"#000"}}>RBI</div>
+          <div><div style={{fontSize:13,fontWeight:800}}>RBI ASSESSMENT ENGINE</div><div style={{fontSize:9,color:S.mt}}>API 580 / 581 — Complete Assessment Suite</div></div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,fontSize:10}}>
+          <span style={{color:S.dm}}>{assessed.length} equip</span>
+          {stats.hi>0&&<Badge text={`${stats.hi} High`} color="#ef4444"/>}
+          <span style={{color:fmsR.fms>1?"#ef4444":"#10b981",fontWeight:700}}>FMS:{fmsR.fms.toFixed(3)}</span>
+          {sel&&<span style={{color:S.ac,fontFamily:"monospace"}}>[{sel.id}]</span>}
+        </div>
+      </div>
+      <div style={{display:"flex",overflowX:"auto",borderBottom:`1px solid ${S.bd}`,background:S.c1}}>
+        {tabs.map(t=><Tab key={t.id} active={tab===t.id} onClick={()=>setTab(t.id)}>{t.l}</Tab>)}
+      </div>
+      <div style={{padding:"14px 18px",maxWidth:1400,margin:"0 auto"}}>
+        {tab==="analytics"&&renderAnalytics()}
+        {tab==="entry"&&renderEntry()}
+        {tab==="detail"&&renderDetail()}
+        {tab==="dm"&&renderDM()}
+        {tab==="corr"&&renderCorr()}
+        {tab==="mgmt"&&renderMgmt()}
+      </div>
+      <div style={{padding:"8px 18px",borderTop:`1px solid ${S.bd}`,textAlign:"center",fontSize:9,color:S.mt}}>RBI Engine — API RP 580 3rd Ed. & API RP 581 3rd Ed. (2016) — For engineering use only</div>
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
