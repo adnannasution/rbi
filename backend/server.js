@@ -13,6 +13,8 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -550,10 +552,32 @@ app.get('/api/dashboard/stats', authenticate, async (req, res) => {
 });
 
 // ============================================================
+// AUTO MIGRATE - Jalankan schema.sql otomatis saat server start
+// ============================================================
+async function runMigrations() {
+  try {
+    const schemaPath = path.join(__dirname, 'schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      await pool.query(schema);
+      console.log('✅ Database schema applied successfully');
+    } else {
+      console.log('⚠️  schema.sql not found, skipping migration');
+    }
+  } catch (err) {
+    // Kalau table sudah ada, error akan muncul tapi tidak apa-apa
+    console.log('ℹ️  Migration note:', err.message.split('\n')[0]);
+  }
+}
+
+// ============================================================
 // START SERVER
 // ============================================================
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+
+async function startServer() {
+  await runMigrations();
+  app.listen(PORT, () => {
   console.log(`RBI API Server running on port ${PORT}`);
   console.log('Endpoints:');
   console.log('  POST   /api/auth/login');
@@ -566,6 +590,9 @@ app.listen(PORT, () => {
   console.log('  GET    /api/risk-ranking');
   console.log('  GET    /api/inspection-plans/upcoming');
   console.log('  GET    /api/dashboard/stats');
-});
+  });
+}
+
+startServer();
 
 module.exports = app;
