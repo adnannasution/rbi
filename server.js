@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(cors());
 app.use(helmet());
 
-// Serve frontend dari folder public/
+// Serve frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
@@ -31,7 +31,7 @@ const pool = new Pool(
   process.env.DATABASE_URL
     ? {
         connectionString: process.env.DATABASE_URL,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        ssl: { rejectUnauthorized: false },
         max: 20,
         idleTimeoutMillis: 30000,
       }
@@ -555,33 +555,28 @@ app.get('/api/dashboard/stats', authenticate, async (req, res) => {
 });
 
 // ============================================================
-// AUTO MIGRATE - Jalankan schema.sql otomatis saat server start
+// START SERVER
 // ============================================================
+// Auto-migrate schema on startup
 async function runMigrations() {
   try {
     const schemaPath = path.join(__dirname, 'schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schema = fs.readFileSync(schemaPath, 'utf8');
       await pool.query(schema);
-      console.log('✅ Database schema applied successfully');
-    } else {
-      console.log('⚠️  schema.sql not found, skipping migration');
+      console.log('✅ Schema applied');
     }
   } catch (err) {
-    // Kalau table sudah ada, error akan muncul tapi tidak apa-apa
-    console.log('ℹ️  Migration note:', err.message.split('\n')[0]);
+    console.log('ℹ️ Migration note:', err.message.split('\n')[0]);
   }
 }
 
-// ============================================================
-// START SERVER
-// ============================================================
 const PORT = process.env.PORT || 3001;
 
 async function startServer() {
   await runMigrations();
   app.listen(PORT, () => {
-  console.log(`RBI API Server running on port ${PORT}`);
+    console.log(`RBI API Server running on port ${PORT}`);
   console.log('Endpoints:');
   console.log('  POST   /api/auth/login');
   console.log('  GET    /api/facilities');
@@ -598,7 +593,7 @@ async function startServer() {
 
 startServer();
 
-// Catch-all: kirim index.html untuk semua route yang tidak dikenali API
+// Catch-all route
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
